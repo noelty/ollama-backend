@@ -2,8 +2,10 @@ from pydantic import BaseModel
 
 
 class ClientRequest(BaseModel):
-    conversation_id: int
+    conversation_id: bytes
     prompt: str
 
-# class ClientResponse(BaseModel):
+class ClientResponse(BaseModel):
+    status: str
+    content: str
     
