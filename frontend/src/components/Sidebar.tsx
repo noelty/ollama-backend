@@ -18,7 +18,7 @@ export default function Sidebar({
   maxVisible = 20,
 }: SidebarProps) {
   const visible = [...chats]
-    .sort((a, b) => b.updatedAt - a.updatedAt)
+    .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
     .slice(0, maxVisible);
 
   return (
