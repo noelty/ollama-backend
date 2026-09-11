@@ -8,8 +8,10 @@ export interface ChatMessage {
 export interface Chat {
   id: string;
   title: string;
-  messages: ChatMessage[];
-  updatedAt: number;
+  /** undefined until fetched from the server; [] means the chat is truly empty. */
+  messages?: ChatMessage[];
+  createdAt: string;
+  updatedAt: string;
 }
 
 /** Discriminated union over the SSE events the backend can emit. */
