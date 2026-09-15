@@ -1,5 +1,5 @@
 [project]
-name = "ollama-project"
+name = "backend"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
@@ -13,11 +13,12 @@ dependencies = [
     "ollama>=0.6.2",
     "psycopg2-binary>=2.9.12",
     "pydantic>=2.13.5",
+    "python-dotenv>=1.2.3",
     "python-ulid>=4.0.1",
     "sqlalchemy>=2.0.52",
     "uvicorn>=0.52.4",
 ]
 
 [project.scripts]
-ollama-project = "ollama-project:main"
+backend = "backend:main"
 
