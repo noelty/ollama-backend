@@ -8,6 +8,8 @@ def init_db():
     
     cursor.execute("CREATE TABLE IF NOT EXISTS conversations (id VARCHAR(50) PRIMARY KEY, title VARCHAR(100), created_at DATETIME, updated_at DATETIME)")
     cursor.execute("CREATE TABLE IF NOT EXISTS messages (id VARCHAR(50) PRIMARY KEY, role CHAR(10), content TEXT, created_at DATETIME, conv_id VARCHAR(50), FOREIGN KEY (conv_id) REFERENCES conversations(id))")
+    cursor.execute("CREATE TABLE IF NOT EXISTS documents (id VARCHAR(50) PRIMARY KEY, name VARCHAR(100), conv_id VARCHAR(50), FOREIGN KEY (conv_id) REFERENCES conversations(id))")
+    cursor.execute("CREATE TABLE IF NOT EXISTS document_contents (id VARCHAR(50) PRIMARY KEY, content VARCHAR(1000), doc_id VARCHAR(50), FOREIGN KEY (doc_id) REFERENCES documents(id))")
     
     conn.commit()
     conn.close()
@@ -81,7 +83,6 @@ def get_convs(conn: sqlite3.Connection):
             })
     return convs
         
-
 def get_conv_messages(conn: sqlite3.Connection, conv_id: str):
     cursor = conn.cursor()
     cursor.execute("SELECT role, content FROM messages WHERE conv_id == ? ORDER BY id", (conv_id,))
@@ -98,3 +99,24 @@ def get_conv_messages(conn: sqlite3.Connection, conv_id: str):
         print("--------------------------------")
         print(conv_messages)
     return conv_messages
+
+def insert_document(conn: sqlite3.Connection, doc_name: str):
+    doc_id = str(ULID())
+    cursor = conn.cursor()
+    cursor.execute("INSERT INTO documents(id, name) VALUES( ?, ?)",(doc_id, doc_name))
+    conn.commit()
+    return cursor.lastrowid
+
+def insert_content(conn: sqlite3.Connection, content: str, doc_id: str):
+    id = str(ULID())
+    cursor = conn.cursor()
+    cursor.execute("INSERT INTO document_contents(id, content, doc_id) VALUES(?,?,?)", (id, content, doc_id))
+    conn.commit()
+    return cursor.lastrowid
+
+def delete_document(conn: sqlite3.Connection, doc_id: str):
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM document_contents WHERE doc_id = ?", (doc_id,))
+    cursor.execute("DELETE FROM document WHERE id = ?", (doc_id,))
+    conn.commit()
+    return cursor.rowcount > 0
