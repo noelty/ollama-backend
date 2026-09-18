@@ -1,9 +1,14 @@
+from app.database import get_message_from_db, insert_message, empty_conv, save_conv, search_conv, insert_document
+from rag.pipeline import ingest_data
+
+from fastapi import UploadFile
 import sqlite3
-from app.database import get_message_from_db, insert_message, empty_conv, save_conv, search_conv
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 import json
 from ollama import chat
+import shutil
+from pathlib import Path
 
 from app.schema import ChatData
 
@@ -56,3 +61,16 @@ def stream_llm(db: sqlite3.Connection, conv: ChatData, prompt: str, conv_id: str
     yield "event: done\ndata: {}\n\n"
     
     insert_message(db, "assistant", llm_response, utc_to_ist(datetime.now(timezone.utc)), conv_id)
+
+
+UPLOAD_DIR = Path("uploads")
+UPLOAD_DIR.mkdir(exist_ok=True)
+
+def upload_document(file: UploadFile, db: sqlite3.Connection):
+    file_path = UPLOAD_DIR / str(file.filename)
+    print(file_path.exists())
+    with open(file_path, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
+        
+    ingest_data(file, db)
+    return [file, file_path]
