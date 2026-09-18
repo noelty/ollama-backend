@@ -43,7 +43,7 @@ def stream_llm(db: sqlite3.Connection, conv: ChatData, prompt: str, conv_id: str
     
     llm_response = ""
     stream = chat(
-        model='gemma3',
+        model='llama3.2',
         messages=messages,
         stream=True,
     )
