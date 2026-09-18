@@ -1,0 +1,1380 @@
+VL-JEPA: Joint Embedding Predictive Architecture for
+Vision-language
+Delong Chen1,2*, Mustafa Shukor 1,3*, Théo Moutakanni 1*, Willy Chung 1,3*,
+Jade Yu1, Tejaswi Kasarla1, Yejin Bang1, Allen Bolourchi1, Yann LeCun1,4, Pascale Fung1,2
+1 Meta FAIR 2 HKUST 3 Sorbonne Université 4 NYU
+* Equal contribution
+delong.chen@connect.ust.hk
+We introduce VL-JEPA, a vision-language model built on a Joint Embedding Predictive Architecture (JEPA).
+Instead of autoregressively generating tokens as in classical VLMs, VL-JEPA predictscontinuous embeddingsof
+the target texts. By learning in an abstract representation space, the model focuses on task-relevant semantics
+while abstracting away surface-level linguistic variability. In a strictly controlled comparison against standard
+token-spaceVLMtrainingwiththesamevisionencoderandtrainingdata,VL-JEPAachievesstrongerperformance
+while having 50% fewer trainable parameters. At inference time, a lightweight text decoder is invoked only when
+needed to translate VL-JEPA predicted embeddings into text. We show that VL-JEPA natively supportsselective
+decodingthat reduces the number of decoding operations by∼2.85× while maintaining similar performance
+compared to non-adaptive uniform decoding. Beyond generation, the VL-JEPA’s embedding space naturally
+supports open-vocabulary classification, text-to-video retrieval, and discriminative VQAwithout any architecture
+modification. On eight video classification and eight video retrieval datasets, the average performance VL-JEPA
+surpasses that of CLIP, SigLIP2, and Perception Encoder. At the same time, the model achieves comparable
+performance as classical VLMs (InstructBLIP, QwenVL) on four VQA datasets: GQA, TallyQA, POPE and POPEv2,
+despite only having 1.6B parameters.
+1 Introduction
+One of the most important aspects of advanced machine
+intelligence is the ability to understand the physical world
+thatsurroundsus. ThisabilityenablesAIsystemstolearn,
+reason, plan and act in the real world in order to assist
+humans [LeCun, 2022]. Intelligent systems that need to
+act in the real world includes wearable devices and robots
+[Fungetal.,2025]. Machinelearningtasksthatmakeupfor
+this ability include captioning, retrieval, visual question
+answering, action tracking, reasoning and planning etc
+[Bordes et al., 2024, Chen et al., 2025b]. Systems for such
+real-worldapplicationsmusthavereal-timeresponsewith
+low latency and inference cost.
+Currently, the common approach to achieve these tasks
+is to use large token-generative Vision Language Models
+(VLMs) [Liu et al., 2023, Dai et al., 2023, Alayrac et al.,
+2022, Chen et al., 2024b, Cho et al., 2025, Chen et al., 2022],
+which takes visual input𝑋𝑉, textual query𝑋𝑄 to generate
+desiredtextualresponse 𝑌 autoregressivelyintokenspace,
+i.e.,(𝑋𝑉,𝑋𝑄)↦→𝑌 . This is straightforward but inadequate
+for two main reasons. First, VLMs are expensive to de-
+velop, because they are trained to generate responses𝑌
+to queries by capturing both task-relevant semantics with
+task-irrelevant surface linguistic features such as words
+choice, style or paraphrasing. During training, VLMs
+must model both aspects, which results in unnecessary
+Predictor
+L
+XQ
+XV Y
+X-Encoder Y-Encoder
+SY
+Textual
+Query
+Visual
+Input
+Textual
+Target
+ŜYSV
+Y-Decoder
+Figure 1.VL-JEPA model architecture
+computingeffortspentproducingdiversetokensequences
+thatultimatelydonotimpactthecorrectnessoftheoutput.
+Second,real-timetasksinvolvinglivestreamingvideo(e.g.,
+live action tracking) require sparse and selective decoding
+(e.g.,,emittingadescriptiononlywhenaneweventoccurs)
+[Zhou et al., 2024]. However, VLMs rely on autoregressive
+token-by-token decoding, which must be completed be-
+fore revealing the underlying semantics of𝑌. This process
+introduces unnecessary latency and hampers the ability
+to update semantics dynamically in real time.
+This paper introduces the Joint Embedding Predictive
+Architecture for Vision-Language (VL-JEPA), turning ex-
+pensive learning of data-space token generation into more
+arXiv:2512.10942v2  [cs.CV]  2 Feb 2026VL-JEPA: Joint Embedding Predictive Architecture for Vision-language
+Sec 1: Intro |Sec 2: Method| Sec 3: Implementation | Sec 4: Experiments | Sec 5: Related Works | Sec 6: Conclusion
+efficientlatent-spacesemanticprediction. Asillustratedin
+Fig. 1, the model employsx-encoderto map vision inputs
+𝑋𝑉 into embedding𝑆𝑉, ay-encoderto map the textual
+target𝑌 intoanembedding 𝑆𝑌,andapredictorthatlearns
+the mapping(𝑆𝑉,𝑋𝑄)↦→𝑆 𝑌 where𝑋𝑄 is a textual query
+(i.e.,the prompt). The training objective is defined in
+the embedding spaceℒVL-JEPA =𝐷(ˆ𝑆𝑌,𝑆𝑌)instead of the
+data spaceℒVLM =𝐷( ˆ𝑌,𝑌) . During inference, ay-decoder
+reads out the predicted embeddingˆ𝑆𝑌 to text spaceˆ𝑌
+when needed.
+Thanks to itsnon-generativenature, VL-JEPA is not
+forced to reconstruct every surface detail of𝑌 in the token
+space. Instead, it only needs to predict the abstract repre-
+sentation𝑆𝑌 in the embedding space. In the raw one-hot
+token space, different plausible𝑌 outputs for the same
+input often appear nearly orthogonal if they don’t share
+overlapping tokens. However, in the embedding space,
+these diverse targets can be mapped to nearby points that
+share similar semantics. This simplifies the target distri-
+bution thus makes the learning process more efficient. In
+addition, unlike VLMs, this approach eliminates the need
+for learning language generation with a heavy decoder
+during training, resulting in significant efficiency gains.
+Thanks to itsnon-autoregressivenature, VL-JEPA can
+produce continuous streams of target semantic embed-
+dings within sliding windows with minimal latency as it
+only require a single forward pass without autoregressive
+decoding. This is particularly advantageous for real-time
+online applications such as live action tracking, scene
+recognition, or planning, where the embedding stream
+can be selectively decoded by a lightweight y-decoder,
+enabling efficient and prompt updates.
+In this work, we empirically validate the advantages
+of VL-JEPA. We conduct a strictly controlled comparison
+against classical token-generative VLM [Liu et al., 2023,
+Cho et al., 2025]: both setups use the same vision encoder,
+spatial resolution, frame rate, training data, batch size,
+and number of iterations, etc., with theonlydifference
+being the objective in token space or embedding space.
+Under this matched training condition, VL-JEPA delivers
+consistently higher performance on zero-shot captioning
+and classification while using roughly half the trainable
+parameters, indicating that embedding-space supervision
+improves learning efficiency.
+Beyond the training phase, VL-JEPA also delivers sub-
+stantial inference-time efficiency improvement through
+selective decoding, where decoding happens only due to
+significant change in the predicted embedding stream.
+Empirically, this strategy reduces the number of decod-
+ing operations by∼2.85×while preserving overall output
+quality measured by average CIDEr scores.
+Our final VL-JEPA models are trained in two stages: 1)
+a pretraining stage using caption data to establish robust
+vision-languagealignment,and2)asupervisedfinetuning
+(SFT) stage that equips the model with VQA capabili-
+ties. The model resulting from the first stage, denoted as
+VL-JEPABASE, is evaluated onzero-shotclassification and
+text-to-video retrieval. VL-JEPABASE outperforms CLIP
+[Radfordetal.,2021], SigLIP2[Tschannenetal.,2025], and
+Perception Encoder [Bolya et al., 2025] models in terms
+of average classification accuracy (across 8 datasets) and
+retrievalrecall@1(across8datasets). Followingthesecond
+stage, theresultingVL-JEPA SFT demonstrates significantly
+improved classification performance due to its exposure
+to in-domain training data. As a unifiedgeneralistmodel,
+VL-JEPASFT approaches the performance ofspecialistmod-
+els optimized for individual benchmarks. Simultaneously,
+VL-JEPASFT exhibits effective VQA capabilities, achieving
+performance on par with established VLM families, such
+as InstructBLIP [Dai et al., 2023] and Qwen-VL [Bai et al.,
+2023], across four datasets covering compositional visual
+reasoning [Hudson and Manning, 2019], complex object
+counting [Acharya et al., 2019], and object hallucination
+[Li et al., 2023b, 2025b].
+In summary, the contributions of this paper are as
+follows:
+• WeintroduceVL-JEPA,thefirstnon-generativemodel
+that can perform general-domain vision-language
+tasks in real-time, built on a joint embedding predic-
+tive architecture.
+• We demonstrate in controlled experiments that VL-
+JEPA, trained with latent space embedding predic-
+tion,outperformsVLMsthatrelyondataspacetoken
+prediction.
+• We show that VL-JEPA delivers significant efficiency
+gains over VLMs for online video streaming appli-
+cations, thanks to its non-autoregressive design and
+native support for selective decoding.
+• We highlight that our VL-JEPASFT model, with an
+unified model architecture, can effectively handle a
+widerangeofclassification,retrieval,andVQAtasks
+at the same time.
+2 Methodology
+We proposeVL-JEPA(Fig. 1), a model with the joint em-
+beddingpredictivearchitecture(JEPA)forvision-language
+tasks. VL-JEPA is trained with triplets⟨𝑋𝑉,𝑋𝑄,𝑌⟩, where
+𝑋𝑉 denotes thevisual input(a single image or a sequence
+of video frames),𝑋𝑄 is atextual query(i.e.,a question)
+and𝑌 isthetextualtarget(i.e.,theanswer)tobepredicted.
+The VL-JEPA comprises of four components:
+2VL-JEPA: Joint Embedding Predictive Architecture for Vision-language
+Sec 1: Intro |Sec 2: Method| Sec 3: Implementation | Sec 4: Experiments | Sec 5: Related Works | Sec 6: Conclusion
+Figure 2.Left: VL-JEPA Architecture. It learns to predict the target embedding𝑆𝑌, instead of reconstructing the raw target𝑌 in token space as in
+classical VLMs.Right: VL-JEPA Applications: It handles vision-text-to-text generation tasks (e.g.,captioning) with selective decoding mechanism
+natively supported. Furthermore, VL-JEPA’s embedding space facilitates discriminative VQA, open-vocabulary classification and text-to-video
+retrieval tasks using a single unified model architecture.
+1.X-Encoder(𝑋 𝑉 ↦→𝑆 𝑉) compresses high-volume
+visual inputs to compact visual embeddings–a se-
+quence of continuous vectors analogous to “visual
+tokens” in classical VLMs.
+2.Predictor(⟨𝑆 𝑉,𝑋𝑄⟩↦→ ˆ𝑆𝑌) is the core component
+of VL-JEPA. It maps visual embeddings to a predic-
+tion of target embedding, with a textual query as
+conditioning.
+3.Y-Encoder(𝑌↦→𝑆 𝑌)embedsthetextualtargetinto
+a continuous latent space as the prediction target.
+The target embedding is expected to abstract away
+task irrelevant information.
+4.Y-Decoder( ˆ𝑆𝑌 ↦→ ˆ𝑌) is not involved during the
+maintrainingphraseofVL-JEPA.Atinferencetime,
+it translates the predicted embedding as human-
+readable text when necessary.
+Fig. 2 illustrates how we instantiate the VL-JEPA ar-
+chitecture in this paper. For the X-Encoder, we chose
+V-JEPA 2 [Assran et al., 2025], a Vision Transformer that
+outputs a sequence of visual tokens, which are then pro-
+jected and fed into thePredictorinitialized using Llama
+3 Transformer layers. Query conditioning is achieved by
+tokenizing and embedding the textual query and feeding
+theresultingtextualtokenembeddingsintothe Predictor
+along with the visual embeddings. The outputs of the
+Llama 3 Transformer layers are pooled and projected into
+the target embedding space produced by theY-Encoder,
+which is initialized by EmbeddingGemma-300M [Vera
+et al., 2025]. We provide more technical details in §3.
+Training Objective.JEPA models typically optimize
+two objectives jointly: 1) prediction error in the embed-
+ding space, and 2) additional regularization that avoids
+representation collapse [Bardes et al., 2021, Balestriero
+and LeCun, 2025]. Any loss that implements these two
+properties can be applied to VL-JEPA. Alternatively, the
+regularization term can be replaced by other anti-collapse
+strategies, such as using an exponential moving average
+(EMA) for theY-Encoder[Assran et al., 2025] or freezing
+theY-Encoder[Zhou et al., 2025].
+In this work, we adopt theInfoNCE loss[Radford
+et al., 2021] due to its maturity in the vision-language
+domain. More advanced non-sample-contrastive regular-
+ization, such as VICReg [Bardes et al., 2021] and SIGReg
+[Balestriero and LeCun, 2025] can also be applied but
+we leave the exploration to future works. InfoNCE loss
+can be mathematically divided [Wang and Isola, 2020]
+into: 1) a representationalignmentterm that minimizes
+the distance between normalized prediction and target
+embeddings, and 2) auniformityregularization term that
+pushes embeddings in a batch apart from each other, thus
+avoiding representation collapse. We train thePredictor
+and the Y-Encoder jointly with bi-directional InfoNCE
+loss, enabling them to mutually learn from each other.
+Compared to the token-space loss used by generative
+VLMs, calculating the training loss in the embedding
+space is beneficial due to thesimplified target distribu-
+tion. Specifically, many real-world prediction tasks are
+inherently ill-posed: for the same input𝑋, there may exist
+multiple plausible targets𝑌 that are all acceptable. For
+example, given the query“What will happen here if I flip
+this light switch down?”, both“the lamp is turned off”and
+“room will go dark”are valid answers. In the raw one-hot
+token space, however, the two sequences are orthogonal
+since they share no overlapping tokens. But when VL-
+JEPA’sY-Encoderembedsthemintonearbypoints(ideally
+yielding a compact unimodal distribution), the learning
+task becomes much easier: the model no longer needs to
+fit multiple disjoint high-density regions in sparse token
+space, but only a single coherent mode in a continuous
+embedding space.
+Multi-tasking.VL-JEPA supports diverse tasks using a
+single,unifiedarchitecture (Fig. 2). For vision-text-to-text
+3VL-JEPA: Joint Embedding Predictive Architecture for Vision-language
+Sec 1: Intro | Sec 2: Method | Sec 3: Implementation |Sec 4: Experiments| Sec 5: Related Works | Sec 6: Conclusion
+generation tasks, such as captioning or open-ended VQA,
+the query𝑋𝑄 is a captioning prompt or a question, and
+the predictor learns to predict the embedding of the target
+output, ˆ𝑆𝑌, which is then decoded into text. VL-JEPA
+also supports CLIP-style open-vocabulary classification
+and discriminative VQA, where candidate label texts are
+encoded into embeddings and compared with prediction
+ˆ𝑆𝑌 to select the nearest match. For text-to-video retrieval,
+candidate videos are mapped to their predicted embed-
+dingsˆ𝑆𝑌 using a retrieval a captioning prompt, and then
+rankedbysimilaritytotheencodedtextualretrievalquery.
+Selective Decoding.Real-world video applications
+often require online streaming inference, such as tracking
+user actions in smart glasses for procedural assistance
+[Chen et al., 2024c], monitoring world states for online
+planning, navigation and robotics [Shukor et al., 2025,
+Black et al., 2025, Song et al., 2025]. A central challenge
+is balancing two competing needs: the model must con-
+tinuously update semantics as new frames arrive, but
+computational efficiency and latency are critical.
+Existing VLMs typically rely on explicit memory mech-
+anisms[Zhouetal.,2024,Qianetal.,2024]todecidewhen
+to decode or complex KV-cache optimizations [Di et al.,
+2025] for efficiency, since autoregressive language models
+are expensive to run continuously. VL-JEPA, in contrast,
+natively supports selective decoding. Since it predicts
+a semantic answer embedding non-autoregressively, the
+model provides a continuous semantic stream ofˆ𝑆𝑌 that
+canbemonitoredinrealtime. Thisstreamcanbestabilized
+withsimplesmoothing(e.g.,averagepooling)anddecoded
+only when a significant semantic shift is detected, such as
+when the local window variance exceeds a threshold. In
+this way, VL-JEPA maintains always-on semantic monitor-
+ing while avoiding unnecessary decoding, achieving both
+responsiveness and efficiency.
+3 Implementation of VL-JEPA
+3.1 Model Architecture
+X-Encoder.Unless otherwise specified, we use a frozen
+V-JEPA 2 ViT-L [Assran et al., 2025] with 304M param-
+eters, a self-supervised vision model that excels at both
+image and video tasks. Each video input is uniformly
+sampled into frames at 2562 resolution. For image inputs,
+the same image is duplicated to match the input shape.
+Predictor.The predictor is initialized with the last 8
+Transformer layers ofLlama-3.2-1B, resulting in 490M
+trainable parameters. The text tokenizer and token em-
+beddingarealsofrom Llama-3.2-1B.Weallowmaximum
+512 query tokens, and put[PAD]tokens for short queries.
+We disable the causal attention mask so that both vision
+and query embeddings can be jointly attended. Linear
+projections connect the predictor with the vision and text
+embeddings, and average pooling on non-[PAD] tokens is
+applied to obtain the predicted target embedding.
+Y-Encoder.We use EmbeddingGemma-300M [Vera et al.,
+2025] as the initialization of theY-Encoder. We set max-
+imum context length of 512 to handle detailed captions.
+Wefoundthatsetting alearning ratemultiplier of ×0.05to
+all text encoder parameters improves performance, since
+the quality of embedding prediction would be suboptimal
+in the beginning of training. Linear projection head is
+applied to bothPredictor and Y-Encoder, obtaining a
+shared embedding space with 1,536 dimensions, where
+the loss is calculated.
+3.2 Two-stage Training
+Large-scale Pretraining.VL-JEPA is trained with two
+stages. The first query-free pretraining stage aims to
+establish robust vision-language alignment using massive
+caption data. We use Datacomp [Gadre et al., 2023] and
+YFCC-100M [Thomee et al., 2016] for image-text data.
+For video-text data, we useAction100M[Chen et al.,
+2026],whichconsistsactiondescriptionandvideocaptions
+generated on HowTo100M videos [Chen et al., 2025b].
+Wefirstdoimage-onlytrainingonDatacompandYFCC-
+100M with only 1 frame per visual input, which allows us
+to use a large batch size of 24k. After 100k iterations, the
+model has seen 2B samples and achieved 61.6% ImageNet
+zero-shot accuracy (without prompt ensembling). Then,
+we continue with video pretraining with 8 frames per
+input for 60k iterations and 32 frames for 10k iterations
+in the end. The pretraining takes 4 weeks using 24 nodes
+with 8×NVIDIA H200 GPUs each. We adopt a constant
+learning rate of5×10−5 to facilitate extended training. We
+refer the readers to the Action100M paper [Chen et al.,
+2026] for more details. We call the resulting modelVL-
+JEPABASE and measurezero-shotclassification and retrieval
+performance with this model.
+SupervisedFinetuning.Thesecondquery-conditioned
+supervised finetuning (SFT) stage empowers VL-JEPA
+VQA capabilities while maintaining the pretrained vision-
+language alignment for classification and retrieval. The
+training data is selected from the PLM data mixture [Cho
+etal.,2025],including25MVQAsamples,2.8Mcaptioning
+samples, 1.8M classification samples, and downsampled
+pretraining stage data to avoid catastrophic forgetting.
+We train the model for 83k steps with a batch size of
+3,072 (∼2.5s days with 24 nodes), with cosine learning
+rate annealing applied to improve convergence. Since
+excessive human labeled data is included in this SFT data
+mixture, we no longer emphasizezero-shotevaluation for
+the resultingVL-JEPA SFT from this stage. Instead, we
+evaluate VQA capabilities and compare it with state-of-
+the-artspecialistmodels.
+4VL-JEPA: Joint Embedding Predictive Architecture for Vision-language
+Sec 1: Intro | Sec 2: Method | Sec 3: Implementation |Sec 4: Experiments| Sec 5: Related Works | Sec 6: Conclusion
+Table 1.Video classification and text-to-video retrieval. Bestzero-shotperformance in each dataset arehighlighted. Samples seen=training step×
+effective batch size.
+Video Classification(Top-1 Accuracy) Text-to-video Retrieval(Recall@1)
+Model
+# Parameters
+# Samples Seen
+Zero-shot
+Generalist Model
+Average
+SSv2
+[Goyal et al., 2017]
+EK100
+[Damen et al., 2022]
+EgoExo4D
+[Grauman et al., 2024]
+Kinetics-400
+[Kay et al., 2017]
+COIN (SR)
+[Tang et al., 2019]
+COIN (TR)
+[Tang et al., 2019]
+CrossTask (SR)
+[Zhukov et al., 2019]
+CrossTask (TR)
+[Zhukov et al., 2019]
+Average
+MSR-VTT
+[Xu et al., 2016]
+ActivityNet
+[Caba Heilbron et al., 2015]
+DiDeMo
+[Anne Hendricks et al., 2017]
+MSVD
+[Chen and Dolan, 2011]
+YouCook2
+[Zhou et al., 2018]
+PVD-Bench
+[Bolya et al., 2025]
+Dream-1k
+[Wang et al., 2024]
+VDC-1k
+[Chai et al., 2024]
+RN50 75M 12.8B 21.8 2.1 1.5 2.1 41.4 8.6 39.0 10.9 68.7 28.3 28.7 17.7 24.7 29.7 5.1 27.6 47.2 46.0
+ViT-B 124M 12.8B 25.4 3.1 1.3 2.8 49.5 11.2 47.3 16.2 71.5 29.3 31.0 19.5 25.7 34.0 6.1 27.0 48.5 42.9CLIP
+ViT-L 389M 12.8B
+✓ ✓
+30.7 3.8 3.7 2.6 58.3 14.7 63.5 20.8 78.5 35.3 35.9 23.4 30.7 41.9 7.9 36.7 56.8 49.3
+ViT-B 375M 40B 33.9 5.2 2.3 4.5 57.8 20.6 69.9 27.7 82.9 39.6 40.2 25.0 32.1 48.6 13.8 52.1 60.9 43.7
+ViT-L 882M 40B 38.6 5.9 4.5 6.4 63.6 24.2 78.5 35.1 90.8 45.4 41.6 32.7 35.1 53.5 19.0 59.2 71.6 50.9SigLIP2
+ViT-g 1.9B 40B
+✓ ✓
+39.8 6.1 6.1 5.6 68.0 26.0 80.4 35.1 90.8 47.5 43.4 33.9 38.9 56.0 22.2 60.4 73.0 52.5
+ViT-B 448M 58B 37.2 5.8 3.3 6.0 65.4 21.5 77.1 26.9 91.8 44.9 46.5 35.4 35.3 49.1 15.2 59.8 68.7 49.2
+ViT-L 671M 58B 42.9 9.3 6.0 11.6 73.4 27.1 83.3 37.5 95.3 50.2 48.9 41.7 40.8 56.2 22.5 64.7 75.9 51.0PE-Core
+ViT-G 2.3B 86B
+✓ ✓
+44.7 9.0 6.4 13.676.4 29.086.0 40.397.2 58.1 51.6 49.1 44.558.7 26.0 77.0 89.2 68.5
+VL-JEPABASE ViT-L 1.6B 3.3B ✓ ✓ 52.5 19.3 21.8 33.2 64.8 47.4 79.4 64.5 89.6 63.7 40.0 64.9 50.0 49.0 40.4 83.1 93.3 88.8
+VL-JEPASFT ViT-L 1.6B 3.6B ✗ ✓ 75.4 73.2 44.6 68.1 84.8 66.4 90.3 79.8 96.2 63.8 46.2 62.4 52.3 52.3 37.8 82.6 89.3 87.7
+Previous SoTA (including specialist models)✗ ✗ - 77.5 56.4 47.8 92.1 67.3 95.3 64.5 96.0 - 62.8 74.1 74.2 61.4 28.9 77.0 89.2 68.5
+4 Experiments
+We begin by evaluating VL-JEPA’s classification and re-
+trieval performance in §4.1, and benchmark VL-JEPA on
+VQA datasets in §4.2. We demonstrate application of VL-
+JEPA for understanding the relationship between world
+statechangesandactionconcepts(i.e.,inversedynamics)in
+§4.3. In§4.5, wedemonstratetheadvantageofembedding
+prediction by comparing it with a token-predictive VLM
+baseline under a strictly controlled setting. In §4.6, we
+evaluate the effectiveness of VL-JEPA’s selective decoding,
+and show that it reduces decoding cost while maintaining
+the performance. Next, we analyze VL-JEPA’sY-Encoder
+in §4.7. Finally, we present ablation studies in §4.8.
+4.1 Classification and Retrieval
+Evaluation Setup.We evaluate VL-JEPA following the
+CLIP-style evaluation protocol (see Fig.2 and §2 “Multi-
+tasking”). We assess VL-JEPA on a broad suite of bench-
+marks, including 8 classification datasets and 8 retrieval
+datasets. Forzero-shotevaluation, we compare against
+generalist foundation modelsCLIP [Radford et al., 2021],
+SigLIP2 [Tschannen et al., 2025], and Perception Encoder
+(PE-Core)[Bolya et al., 2025]. We additionally report refer-
+ence numbers fromspecialist modelsthat are individually
+optimized for each benchmark.
+Results.Table 1 summarizes the results. In the strict
+zero-shot setting, VL-JEPABASE achieves higher average ac-
+curacy(52.5vs44.7)acrossthe8classificationdatasetsand
+higher average recall@1 (63.7 vs 58.1) across the 8 retrieval
+datasets than the best baseline PE-Core-G. Per-dataset
+scores show that VL-JEPABASE is particularly strong on
+motion-centricbenchmarks (SSv2, EK-100, EgoExo4D, and
+step recognition on COIN and CrossTask), while relatively
+weakeronappearance-centricbenchmarks(Kinetics-400and
+task recognition on COIN and CrossTask). This is due to
+VL-JEPABASE has seen substantially fewer vision-language
+pairs(only3.6BincomparisonwithPE-Core-G’s86B).After
+supervised finetuning, VL-JEPASFT improves significantly
+upon VL-JEPABASE since the model has seen in-domain
+trainingdata. Asasinglegeneralistmodel,theperformance
+of VL-JEPASFT is approachingspecialistmodels optimized
+individually for each dataset.
+4.2 Visual Question Answering
+Evaluation Setup.We evaluate VL-JEPASFT on discrimi-
+native VQA tasks. The inference process involves encode
+candidate answers using theY-Encoder and selecting the
+answer that minimizes the distance to the predicted em-
+bedding (see Fig. 2). We select four benchmarks that
+prioritize visual perception rather than knowledge and
+reasoning. We evaluate on GQA [Hudson and Manning,
+2019], a dataset for real-world visual reasoning and com-
+positional QA, reporting accuracy on the testdev-balanced
+split. For TallyQA [Acharya et al., 2019], which targets
+complex counting, we follow Chen et al. [2022] and report
+the weighted average accuracy across the “simple” and
+“complex” splits. Finally, to assess object hallucination,
+we utilize POPE [Li et al., 2023b] and POPEv2 [Li et al.,
+2025b]. For POPE, we report the average accuracy across
+the “random”, “popular”, and “adversarial” settings on
+MS-COCO.
+Results.Table 4.2 compares VL-JEPASFT against estab-
+lished VLM families, including BLIP-2 [Li et al., 2023a],
+InstructBLIP [Dai et al., 2023], Qwen-VL [Bai et al., 2023],
+InternVL [Chen et al., 2024d], Llava-1.5 [Vallaeys et al.,
+2024], SmolVLM [Marafioti et al., 2025], PaLI [Chen et al.,
+2022], PaliGemma [Beyer et al., 2024], and Video-LLaVA
+5VL-JEPA: Joint Embedding Predictive Architecture for Vision-language
+Sec 1: Intro | Sec 2: Method | Sec 3: Implementation |Sec 4: Experiments| Sec 5: Related Works | Sec 6: Conclusion
+Table 2.VQA benchmarks.We report accuracy on GQA [Hudson and Manning, 2019], TallyQA [Acharya et al., 2019], POPE [Li et al., 2023b], and
+POPEv2 [Li et al., 2025b]. Scores lower than our model are marked in red. Scores from SmolVLM are obtained by our evaluation, while other baselines
+are reported in the literature.
+GQA: compositional visual reasoningTallyQA: complex object countingPOPE: object hallucinationPOPEv2: object hallucination
+Model Accuracy Model Accuracy Model Accuracy Model Accuracy
+BLIP-2 (OPT-2.7B) 33.9 SmolVLM-256M 32.3 SmolVLM2-256M 56.4 SmolVLM-256M 62.3
+BLIP-2 (FlanT5XXL) 41.0 SmolVLM-500M 44.8 SmolVLM-256M 57.9 LLaVA-1.5-13B 72.7
+InstructBLIP (FlanT5XL) 48.4 PaLI-700M 62.3 LLaVA-7B 72.9 InternVL2-8B 74.5
+InstructBLIP (Vicuna-13B) 49.5 SmolVLM-2B 64.7 InstructBLIP (Vicuna-13B) 79.0 InternVL2-26B 76.1
+Qwen-VL-Chat-7B 57.5 PaLI-3B 65.8 Video-LLaVA (7B) 83.4 Qwen2-VL-72B 79.4
+Qwen-VL-7B 59.3 InstructBLIP (Vicuna-13B) 68.0 SmolVLM-500M 85.8 SmolVLM-500M 83.8
+InternVL-Chat (Vicuna-7B) 59.5 PaLI-17B 71.9 LLaVA-1.5-7B 85.9 Qwen2-VL-7B 87.0
+LLaVA-1.5 (Vicuna-7B) 62.0 LLaVA-1.5 (Vicuna-13B) 72.3 LLaVA-1.5-13B-HD 86.3 SmolVLM-2B 88.8
+InternVL-Chat (Vicuna-13B) 66.6 PaliGemma (3B) 76.8 SmolVLM-2B 87.5 Qwen2-VL-2B 91.3
+VL-JEPASFT (1.6B) 61.5 VL-JEPASFT (1.6B) 69.9 VL-JEPASFT (1.6B) 85.7 VL-JEPASFT (1.6B) 86.3
+Table 3.WorldPrediction-WMbenchmark results. We compare the accuracy between large VLMs, socratic LLMs, and VL-JEPA. VL-JEPASFT
+achieves a new SoTA at 65.7%.
+Vision Language Models Socratic LLMs(w/ Qwen2.5-VL-72B captions)VL-JEPA
+InternVL2.5 Qwen2.5-VL Llama-3.1 Llama-4 Qwen2.5 GPT-4o Claude-3.5 Gemini-2 BASE SFT
+2B 4B 26B 38B 3B 7B 32B 72B 8B 70B 109B 400B 3B 7B 72B N/A N/A N/A 1.6B 1.6B
+20.0 29.8 30.2 50.3 21.6 45.5 49.0 57.0 48.7 49.8 52.7 53.6 44.0 49.1 48.5 52.0 53.3 55.6 63.9 65.7
+[Lin et al., 2024]. VL-JEPASFT outperforms many of these
+baselinesdespiterequiringsignificantlylesscomputational
+resources–classical VLMs rely on extensively pretrained
+CLIPbackbonescombinedwithmulti-stagevisualinstruc-
+tion tuning. In comparison, VL-JEPASFT employs aunified
+architectureand asingle embedding spaceto seamlessly han-
+dle VQA, classification, and retrieval (Tab. 1).
+4.3 WorldPrediction-WM
+Evaluation Setup.We evaluate VL-JEPA on the “world
+modeling”taskintheWorldPrediction[Chenetal.,2025a]
+benchmark,wherethemodelisprovidedwithtwoimages
+representing the initial and final world states and must
+identify, among four candidate video clips, the action
+that explains the observed transition. To adapt VL-JEPA,
+we duplicate and concatenate the initial and final state
+images to extract astate embedding, and encode each action
+candidate intoaction embeddings. The model then selects
+the candidate whose embedding is closest to the state
+embedding.
+Results.Table 3 shows accuracy comparisons. VL-
+JEPABASE attains63.9%andVL-JEPA SFT attains65.7%top-1
+accuracy onWorldPrediction-WM, establishing a new
+state of the art. Our VL-JEPA model not only substantially
+surpasses existing VLMs of comparable or larger scale but
+also exceeds the performance of frontier LLMs such as
+GPT-4o, Claude-3.5-sonnet, and Gemini-2.0.
+4.4 Action Anticipation
+Evauation Setup.We assess the action anticipation (i.e.,
+forecasting future actions) capabilities of fine-tuned VL-
+JEPA on two benchmarks: action anticipation with EPIC-
+Table4.FinetuningresultsonEPIC-KITCHENS-100actionanticipation
+(Recall@5)fordifferentanticipationtime 𝑡. VL-JEPAoutperformsV-JEPA2
+with a ViT-L-256px vision encoder across all anticipation time.
+Model Vision Encoder𝑡=1𝑠 𝑡=2𝑠 𝑡=4𝑠 𝑡=10𝑠
+V-JEPA2ViT-g-384px39.7 28.6 19.3 8.2
+V-JEPA2ViT-L-256px32.7 23.4 15.9 7.1
+VL-JEPA ViT-L-256px 34.2 26.0 19.4 11.7
+Table 5.Finetuning result on COIN next step forecasting. VL-JEPA
+established a new SoTA at 56.2.
+Model VideoLLM
+-online (8B)
+VideoLLM
+-MoD (8B)
+ProVideLLM
+-8B/11+
+VL-JEPA
+(1.6B)
+Accuracy 49.1 49.7 53.6 56.2
+KITCHENS-100 [Damen et al., 2022], and COIN [Tang
+et al., 2019] next step forecasting. In this task, given a
+window of context video, the model is required to predict
+thenextactionthatwilloccurafteraspecifiedanticipation
+time—the temporal gap between the end of the context
+segment and the onset of the subsequent action. VL-
+JEPASFT is fine-tuned and we compare our results against
+the state-of-the-art baselines.
+ResultsAs compated in Table VL-JEPA demonstrates
+strong performance in both benchmarks (Table 4 and
+Table 5). For the Epic-Kitchens-100, particularly at the
+standard 1-second anticipation interval, where it achieves
+aRecall@5of34.18–surpassingthepreviousV-JEPA2that
+uses the same ViT-L-256px encoder by 1.48 points. While
+the larger V-JEPA 2 ViT-g-384px model attains the highest
+scoreat1second,VL-JEPAremainscompetitiveandshows
+notableadvantagesatlongeranticipationintervals. Onthe
+6VL-JEPA: Joint Embedding Predictive Architecture for Vision-language
+Sec 1: Intro | Sec 2: Method | Sec 3: Implementation |Sec 4: Experiments| Sec 5: Related Works | Sec 6: Conclusion
+Figure 3.Comparison of embedding prediction (VL-JEPA) and token prediction (VLM).We conduct a fair comparison of under strictly aligned
+training settings (encoder, data, batchsize, etc.).Left:Zero-shot video captioning CIDEr score averaged over 3 datasets and zero-shot classification
+accuracy (top-5) averaged over 3 benchmarks.Right:Comparing the trainable parameters and average inference time cost.
+COIN next step forecasting task, as shown in Tab. 5, VL-
+JEPA achieves 56.2%, outperform strong VLM baselines
+VideoLLM-online [Chen et al., 2024c], VideoLLM-MoD
+[Wu et al., 2024], ProVideLLM [Chatterjee et al., 2025].
+Overall, these findings demonstrated that VL-JEPA can be
+finetuned to handle semantic uncertain prediction tasks.
+4.5 Embedding Prediction vs. Token
+Prediction: A Controlled Comparison
+Evaluation Setup.In this section, we compare VL-JEPA to
+a token-generative VLM baseline under a strictly aligned
+training conditions. Both models use the same Perception
+Encoder [Bolya et al., 2025] (frozen ViT-L-14 with 3362
+resolution,notiling,16framespervideo)forvisioninputs.
+Weusethesametrainingiterationswiththesameeffective
+batchsizeof128,samelearningratescheduleronthesame
+pretraining data mixture described above (§3). The only
+difference is the prediction task: VL-JEPA predicts target
+embeddings[Duquenneetal.,2023]usinga0.5Bpredictor,
+whereastheVLMbaselineperformsnext-tokenprediction
+with cross-entropy using a 1B LLM. For VLM, we use the
+standard training recipe and codebase of PerceptionLM
+[Cho et al., 2025], aligning frozen vision encoder and text-
+only LLMLlama-3.2-1B. For VL-JEPA, we initialize the
+predictor from the 8-16 layers ofLlama-3.2-1B.
+Weevaluatebothmodelsatregularcheckpointsthrough-
+out training spanning from 500K to 15M samples seen. At
+each checkpoint, we measure the performance on video
+captioning and video classification. For video captioning,
+we report CIDEr scores averaged across YouCook2 [Zhou
+et al., 2018], MSR-VTT [Xu et al., 2016] and PVD-Bench
+[Bolyaetal.,2025]. VL-JEPAdecodesthepredictedembed-
+dings while VLM generates the tokens directly. For video
+classification, we report top-5 accuracy averaged across
+CrossTask-Step, CrossTask-Task [Zhukov et al., 2019] and
+EgoExo4D [Grauman et al., 2024]. For VL-JEPA we choose
+the candidate with lowest cosine distance to the predicted
+embedding, while for VLM we pick the class with lowest
+perplexity.
+Results.As shown in Fig. 3, both models yield compa-
+rable performance after 500K samples seen in both tasks,
+with respectively 1.23 and 1.35 CIDEr in video captioning
+and 14.9% and 14.0% top-5 accuracy for VL-JEPA and
+VLM. After a few iterations, we show that VL-JEPA’s per-
+formance increase is much sharper compared to VLM,
+reaching 14.7 CIDEr and 35.3% top-5 accuracy after 5M
+samplesseen. Thisgapremainsconstantastrainingscales
+at 15M samples with 14.8 CIDEr and 41.0% top-5 accuracy
+for VL-JEPA, while the VLM baseline yield respectively
+7.1 CIDEr and 27.2% top-5 accuracy. This controlled com-
+parison highlights the benefit of predicting embeddings
+rather than tokens, showing both higher sample efficiency
+and stronger absolute performance.
+WecomparetheinferencecostoftheaboveVL-JEPAand
+theVLMbypre-loading64videoframesintomemoryand
+repeatedly decoding text 100 times with the same prompt,
+measuring the average time per sample. As shown in
+Fig.3(rightmost),bothmodelsexhibitcomparablelatency
+when generating text. What differentiates our model
+from classical VLM is the decoupling between the prompt
+processing (“Query Embedding”) and the video encoder
+(“Encoder + Predictor”) from the text generation module
+(“Decoder”). This allows us to only use the first part of
+the model to perform retrieval and decode text only when
+needed (see Section 4.6 below), making our model more
+scalable for online video inference.
+4.6 Effectiveness of Selective Decoding
+Evaluation Setup.We evaluate the effectiveness of VL-
+JEPA’sembedding-guidedselectivedecodingonlong-form
+video streams. To this end, we design a benchmark task
+where the goal is to recover a temporal sequence of an-
+notations while minimizing the number of text decoding
+operations, which dominate inference cost. As shown in
+Fig. 4 (left), decoding is performed only at selected points
+alongtheVL-JEPAembeddingstream,yieldingasequence
+of𝑁 decodedoutputs[(ˆ𝑡1,ˆ𝑦1),(ˆ𝑡2,ˆ𝑦2),...,( ˆ𝑡𝑁,ˆ𝑦𝑁)]. Each
+ground-truth annotation[(𝑡1,𝑦 1),(𝑡 2,𝑦 2),...,(𝑡 𝑇,𝑦𝑇)] is
+then aligned to its nearest decoded output in time (illus-
+trated as◦···◦ in Fig. 4), and CIDEr is computed between
+matched pairs. We use the EgoExo4D [Grauman et al.,
+2024] validation set in procedural activity domains, which
+consistsof218videoswithanaveragedurationof6minutes
+7VL-JEPA: Joint Embedding Predictive Architecture for Vision-language
+Sec 1: Intro | Sec 2: Method | Sec 3: Implementation |Sec 4: Experiments| Sec 5: Related Works | Sec 6: Conclusion
+Figure 4.Evaluation of selective decoding. Left:We compare uniform sampling of decoding points at fixed intervals (red) and embedding-guided
+selective decoding (blue). Performance is measured by the average CIDEr score between each annotation𝑦 and its closest decoded outputˆ𝑦.Right:
+Results on EgoExo4D show that selective decoding achieves a Pareto improvement over uniform sampling: for the same performance level, it requires
+fewer decoding operations.
+Table 6.Comparison of text-encoders performance. We report triplet-based accuracy (%) on SugarCrepe++ and VISLA datasets.
+Model # Params.
+(total)
+# Params.
+(text encoder)
+SugarCrepe++[Dumpala et al., 2024a] VISLA[Dumpala et al., 2024b]
+Average
+Replace
+Attribute
+Replace
+Object
+Replace
+Relation
+Swap
+Attribute
+Swap
+Object Average Generic Spatial
+CLIP ViT-L 389M 85M 44.5 56.7 83.0 42.5 27.0 13.5 34.5 37.6 31.3
+SigLIP2 ViT-g 1.9B 708M 56.5 66.9 74.4 52.1 58.4 30.6 40.4 48.7 32.1
+PE-Core ViT-G 2.3B 537M 58.6 73.690.6 48.9 53.2 26.5 38.3 45.2 31.4
+VL-JEPABASE ViT-L 1.6B 300M 63.9 72.2 90.1 52.2 62.9 42.0 42.9 49.8 35.9
+VL-JEPASFT ViT-L 1.6B 300M 58.4 68.5 90.9 47.4 55.4 29.8 39.5 44.8 34.2
+and about𝑇=143atomic action annotations per video.
+As a baseline, we consideruniform sampling, where de-
+codingpointsareplacedatfixedintervalsregardlessofthe
+underlying video content. Standard streaming VLMs are
+limited to this strategy, whereas VL-JEPA supports a more
+effective alternative:adaptive selectionof decoding points
+guided by its predicted embeddings. We apply agglom-
+erative clustering with temporal connectivity constraints
+[MurtaghandContreras,2012]topartitiontheembedding
+sequence into𝑁 segments of high intra-segment monose-
+manticity [Chen et al., 2024a], measured by variance (i.e.,
+Ward distance). The intuition is that within a semantically
+coherent segment, decoded outputs are highly similar, so
+decoding once per segment captures the essential infor-
+mation while greatly reducing overall decoding cost. The
+midpoint of each segment is then chosen as the decoding
+point, and decoding is performed either from the exact
+embeddingorfromtheaverage-pooledembeddingwithin
+the segment.
+Results.As shown in Fig. 4 (right), we sweep the av-
+erage decoding frequency from 2.0 Hz down to 0.01 Hz
+(i.e.,average intervals between consecutive decoding op-
+erations from 0.5s to 100s) by adjusting either the stride
+of uniform sampling or the number of clusters in adap-
+tive selection. Across the entire range, adaptive selection
+consistently Pareto-dominates uniform sampling. In par-
+ticular, selective decoding at 0.35 Hz (i.e.,∼2.85s interval)
+matches the performance of uniform decoding at 1 Hz,
+reducing decoding cost by∼2.85×. We further observe
+that average pooling provides consistent gains for both
+strategies, since it provides denoising and stabilization on
+embeddings prior feeding into the decoder.
+4.7 Evaluation of Y-Encoder
+EvaluationSetup.WeevaluatewhethertheJEPAarchitec-
+ture improves theY-Encoder by following the uni-modal
+text-only(TOT)evaluationsetup. Weusethehard-negative
+benchmarks SugarCrepe++ [Dumpala et al., 2024a] and
+VISLA[Dumpalaetal.,2024b]. Thesedatasetstestsensitiv-
+ity to semantic and lexical changes in image descriptions.
+Eachdatasetcontainstriplets: twosemanticallysimilarde-
+scriptionsofthesameimage( 𝑝1 and𝑝2),andonenegative
+description (𝑛) created by altering attributes, relations, or
+objects. We compareY-Encoders from different models
+bycomputingthecosinesimilarityforalldescriptionpairs.
+Wecheckthat thesimilaritybetweenpositives 𝑠𝑖𝑚(𝑝1,𝑝2)
+is higher than both the similarity between each positive
+and the negative𝑠𝑖𝑚(𝑝1,𝑛) and 𝑠𝑖𝑚(𝑝2,𝑛) . We report
+accuracy (%) across all samples.
+Results.Table 6 shows the performance of different
+models on text hard-negative benchmarks. VL-JEPABASE
+achieves a micro average accuracy of63.9% on Sugar-
+Crepe++ and42.9% on VISLA. Thisis higherthanthe best
+othermodels: PE-Corescores 58.6%onSugarCrepe++and
+SigLIP2scores 40.4%onVISLA.ThefinetunedVL-JEPA SFT
+model also achieves competitive results, with58.4% on
+SugarCrepe++and 39.5%onVISLA.Theseresultsindicate
+that VL-JEPABASE has aY-Encoder that is more resilient to
+text hard-negatives.
+8VL-JEPA: Joint Embedding Predictive Architecture for Vision-language
+Sec 1: Intro | Sec 2: Method | Sec 3: Implementation | Sec 4: Experiments |Sec 5: Related Works| Sec 6: Conclusion
+Table 7.Ablation studies results. The default setting adopted by VL-JEPA is marked inblue . We calculate±delta within each group of ablations
+in comparison with the default setting.
+Classification
+(Accuracy)
+Retrieval
+(Recall@1)
+VQA
+(Accuracy)
+VL-JEPASFT 75.4 63.8 74.2
+(a) Effectiveness of pretraining stage on caption data
+w/ Pretraining 49.0 47.5 46.1
+w/o Pretraining 27.3(-21.7)30.2(-17.3)42.5(-3.6)
+(b) Learning rate multiplier for Y-Encoder
+multiplier= 0.05 27.3 30.2 42.5
+multiplier= 1.00 23.7(-3.6)28.8(-1.4)40.7(-1.8)
+multiplier= 0.10 26.9(-0.4)30.2(-0.0)42.9(+0.4)
+multiplier= 0.01 25.6(-1.7)27.7(-2.5)41.0(-1.5)
+multiplier= 0.00 20.0(-7.3)25.9(-4.3)41.4(-1.1)
+(c) Loss function (with no projection head on top frozen text encoder)
+InfoNCE 23.3 30.3 44.3
+Cosine 16.5(-6.8)20.2(-10.1)46.6(+2.3)
+L1 14.8(-8.5)15.5(-14.8)41.9(-2.4)
+L2 13.5(-9.8)11.7(-18.6)43.7(-0.6)
+Classification
+(Accuracy)
+Retrieval
+(Recall@1)
+VQA
+(Accuracy)
+(d) Predictor architecture and initialization
+Layer 8-16 27.3 30.2 42.5
+Layer 0-2 24.3(-3.0)27.8(-2.4)40.1(-2.4)
+Layer 0-4 25.1(-2.2)28.9(-1.3)43.6(+1.1)
+Layer 0-8 27.2(-0.1)29.3(-0.9)43.4(+0.9)
+Layer 0-16 27.4(+0.1)31.0(+0.8)45.5(+3.0)
+w/o Bi-direction Attention 26.7(-0.6)31.2(+1.0)40.6(-1.9)
+w/o Llama-3 Initialization 28.1(+0.8)30.4(+0.2)40.6(-1.9)
+(e) Y-Encoder (trainable linear projection on top of frozen text encoder)
+EmbeddingGemma-300M 19.5 24.1 42.5
+Qwen3-Embedding-0.6B 24.5(+5.0)24.5(+0.4)41.5(-1.0)
+Qwen3-Embedding-4B 27.7(+8.2)26.6(+2.5)38.1(-4.4)
+Qwen3-Embedding-8B 29.6(+10.1)29.5(+5.4)41.9(-0.6)
+PEcore-B (356M) 29.4(+9.9)34.5(+10.4)35.9(-6.6)
+PEcore-L (356M) 29.0(+9.5)34.2(+10.1)42.9(+0.4)
+PEcore-G (539M) 33.9(+14.4)32.0(+7.9)41.8(-0.7)
+4.8 Ablation Study
+Evaluation Setup.We study different design choices for
+VL-JEPA.HerewetrainallablationmodelsontheSFTstage
+datafor10Kstepswithabatchsizeof512(5Msamplesseen)
+andconstantlearningrate. Wereportaverageclassification
+top-1 accuracy of 8 datasets (Tab. 1), average text-to-video
+retrieval recall@1 of 8 datasets (Tab. 1), and average VQA
+accuracy of 4 datasets (CLEVR, GQA, TallyQA simple and
+complex). We report the results in Tab. 7.
+Results. (a) Pretraining.Dropping the first query-free
+pretrainingstageonimageandvideocaptionssignificantly
+hurt performance, especially on classification (-21.7) and
+retrieval (-17.3).(b) LR Multiplier.The sweet point of
+learning rate multiplier to the Y-Encoder is around 0.05
+to 0.10. Either faster or slower learning degrades the
+performance.(c) Loss Function.InfoNCE generally give
+superior performance compared to cosine, L1, and L2
+losses, with the only exception being cosine loss outper-
+form InfoNCE on VQA. However, only InfoNCE has the
+anti-collapse regularization and can be applied with un-
+frozenY-Encoder.(d)Predictor.Intermsofpredictorsize,
+more layers yield better performance, especially on VQA
+performance. We also see that if using the original causal
+attentioninsteadofupdatingtobi-directionattentionhurt
+VQA performance (-1.9), since query tokens are appended
+after visual tokens, and visual tokens are no longer able to
+attend to query tokens. Finally, we also see that LLama-3
+initialization is beneficial to VQA performance, although
+vision-language alignment (classification and retrieval) is
+a bit worse compared to randomly initialized Transformer
+layers.(e)Y-Encoder.Wetrieddifferenttextencoderasthe
+Y-Encoder, and confirmed that VL-JEPA works well with
+other embedding models than EmbeddingGemma-300M.
+Generally,largerencoderleadstobetterperformance,with
+visually aligned text encoders (PE models) has significant
+advantage in classification and retrieval.
+5 Related Works
+JEPA Models.JEPA model learns by predicting the rep-
+resentation of a target input𝑌 from the representation of
+a context input𝑋. Early instantiations include I-JEPA for
+image encoding [Assran et al., 2023] and V-JEPA for video
+encoding [Bardes et al., 2023], which demonstrated the
+effectiveness of this objective over pixel reconstruction ap-
+proachintheirrespectivemodality. RecentJEPAworkfalls
+into two categories. One category of work emphasizes
+better unimodal representation learning [Assran et al.,
+2023, Bardes et al., 2023, Fei et al., 2023] or cross-modal
+alignment [Lei et al., 2025, Jose et al., 2025]. The other
+direction targets world modeling, where pretrained en-
+coders are frozen and action-conditioned predictors are
+trained for conditional prediction of state representations
+[Zhou et al., 2025, Baldassarre et al., 2025, Assran et al.,
+2025, Terver et al., 2025]. This has shown good results
+but remains limited to narrow domains like mazes or
+robotic pick-and-place. Our proposed VL-JEPA is the first
+designed for general-purpose vision–language tasks. It
+performsconditionallatentpredictionovervisionandtext,
+and preserves efficiency while enabling flexible, multitask
+architecture.
+Vision Language Models.Existing vision-language
+modelslargelyfallintotwofamilies: (1)CLIP-stylemodels
+with a non-predictive joint-embedding architecture (JEA)
+[Radford et al., 2021, Zhai et al., 2023, Bolya et al., 2025,
+Liu et al., 2024, Chen et al., 2023] encode images and
+texts independently into a common latent space,𝑋𝑉↦→𝑆𝑉
+9VL-JEPA: Joint Embedding Predictive Architecture for Vision-language
+Sec 1: Intro | Sec 2: Method | Sec 3: Implementation | Sec 4: Experiments | Sec 5: Related Works | Sec 6: Conclusion
+and 𝑌↦→𝑆 𝑌. By minimizing ℒCLIP =𝐷(𝑆 𝑉,𝑆𝑌) with
+a contrastive loss (e.g.,InfoNCE), CLIP learns aligned
+representationsthat support zero-shot classification and
+vision–language retrieval; (2) Generative VLMs [Liu et al.,
+2023, Chen et al., 2022, Dai et al., 2023, Alayrac et al., 2022,
+Chen et al., 2024b, Cho et al., 2025, Beyer et al., 2024]
+connect a vision encoder [Radford et al., 2021, Fini et al.,
+2025]withalanguagemodel(e.g.,LLM).Theyaretypically
+trained withℒVLM =𝐷( ˆ𝑌,𝑌) ,i.e.,next token prediction
+with cross-entropy loss, and can learn to handle various
+vision-text-to-text generation tasks such as VQA.
+Table 8.Task coverage comparison.
+CLIP VLM VL-JEPA
+Generation✗ ✓ ✓
+Retrieval✓ ✗ ✓
+Our proposed VL-JEPA integrates the architectural ad-
+vantages and task coverage of both CLIPs and VLMs
+(Table 8). Since VL-JEPA learns in embedding space, it
+can leverage web-scale noisy image–text pairs [Jia et al.,
+2021], yieldingstrongopen-domainfeatures. Ontheother
+hand,VL-JEPAsupportsconditionalgenerationtaskswith
+a readout text decoder. Meanwhile, compared to genera-
+tive VLMs that optimize directly in data space, VL-JEPA is
+more efficient at learning in the latent space. In addition,
+it is also more efficient for online inference, as it allows
+naturally selective decoding.
+Efficient Vision Language Models.The growing size
+andtrainingcostofVLMshasmotivatedeffortstoimprove
+efficiency. On the training side, strong performance can
+be achieved by updating only a subset of parameters,
+suchasthevision–languageconnector[Tsimpoukellietal.,
+2021, Alayrac et al., 2022, Vallaeys et al., 2024, Shukor
+et al., 2023, Koh et al., 2023, Merullo et al., 2022, Dai
+et al., 2023]. At inference, efficiency is pursued through
+pruning parameters or visual tokens [Cao et al., 2023,
+Shukor and Cord, 2024, Vasu et al., 2025]. For real-time
+use cases, recent work explores small VLMs [Yao et al.,
+2024, Marafioti et al., 2025] and heuristics to reduce query
+frequency in asynchronous inference [Shukor et al., 2025].
+Latent-space Language Modeling.Current state-of-
+the-artLLMsaretrainedtodecodeandreasonintextspace
+using autoregressive generation and chain-of-thought
+prompting[Weietal.,2022]. Text-spaceLLMshaverapidly
+improved and now achieve strong results on a wide range
+of benchmarks. However, the discrete nature of their rea-
+soning trace may limit both speed and performance in
+the long term. Several works have explored latent-space
+LLMs that process or reason in latent space, such as Large
+Concept Models [Barrault et al., 2024] and COCONUT
+[Hao et al., 2024]. These models focus on unimodal latent-
+space reasoning. With VL-JEPA, our goal is to align vision
+and text representations in a shared multi-modal latent
+space. This approach aims to enable better abstractions
+and improve both the performance and speed of vision-
+language models (VLMs). We hope VL-JEPA will serve as
+a foundation for future work on multi-modal latent space
+reasoning, including visual chain-of-thought methods [Li
+et al., 2025a].
+6 Conclusion
+WehavepresentedVL-JEPA,anewvision–languagemodel
+built upon the joint embedding predictive architecture.
+By shifting supervision from discrete token space to con-
+tinuous semantic embedding space, VL-JEPA simplifies
+the learning target, avoids redundant modeling of sur-
+face linguistic variability, and enables non-autoregressive
+prediction. Through controlled experiments, we show
+that VL-JEPA outperforms generative VLMs trained with
+cross-entropy loss under matched training data budget,
+while achieving superior training efficiency and signifi-
+cantly lower inference latency. Beyond generation tasks,
+the embedding-based design further allows VL-JEPA to
+handle open-vocabulary classification and cross-modal
+retrieval within a single unified architecture. Its ability
+to emit continuous semantic embeddings also makes it
+particularly well suited for real-time video applications,
+where selective decoding can improve both responsive-
+ness and efficiency. In this work, we demonstrated the
+advantages of VL-JEPA over standard VLMs, particularly
+in computational efficiency, streaming applications, and
+video-language tasks. Our goal at this stage, is not to
+propose a universal alternative to VLMs, as this would
+requirebroaderevaluationontaskssuchasreasoning,tool
+use, and agentic behaviors where current token generative
+VLMs excel. Finally, although our results show clear bene-
+fits from scaling parameters and dataset size, we did not
+fully explore this direction, leaving it for future work.
+Acknowledgments
+WewouldliketothankLoïcBarrault,LucasBeyer,Quentin
+Garrido, João Maria Janeiro, Yifu Qiu, Koustuv Sinha,
+Basile Terver, and François Yvon for providing valuable
+feedback and support to this work. We thank Adrien
+Bardes for detailed V-JEPA 2 baseline performance on
+EK-100 action anticipation. We acknowledge Alejandro
+CastillejoMuñozforhiseffortsonreal-timedemonstration
+and qualitative evaluation of VL-JEPA.
+References
+Manoj Acharya, Kushal Kafle, and Christopher Kanan.
+Tallyqa: Answering complex counting questions. In
+Proceedings of the AAAI conference on artificial intelligence,
+volume 33, pages 8076–8084, 2019.
+10VL-JEPA: Joint Embedding Predictive Architecture for Vision-language
+Sec 1: Intro | Sec 2: Method | Sec 3: Implementation | Sec 4: Experiments | Sec 5: Related Works | Sec 6: Conclusion
+Jean-Baptiste Alayrac, Jeff Donahue, Pauline Luc, An-
+toine Miech, Iain Barr, Yana Hasson, Karel Lenc, Arthur
+Mensch, Katherine Millican, Malcolm Reynolds, et al.
+Flamingo: a visual language model for few-shot learn-
+ing.Advances in neural information processing systems, 35:
+23716–23736, 2022.
+Lisa Anne Hendricks, Oliver Wang, Eli Shechtman, Josef
+Sivic, Trevor Darrell, and Bryan Russell. Localizing
+moments in video with natural language. InProceedings
+of the IEEE international conference on computer vision,
+pages 5803–5812, 2017.
+Mahmoud Assran, Quentin Duval, Ishan Misra, Piotr Bo-
+janowski, Pascal Vincent, Michael Rabbat, Yann LeCun,
+and Nicolas Ballas. Self-supervised learning from im-
+ages with a joint-embedding predictive architecture. In
+ProceedingsoftheIEEE/CVFConferenceonComputerVision
+and Pattern Recognition, pages 15619–15629, 2023.
+Mido Assran, Adrien Bardes, David Fan, Quentin Garrido,
+Russell Howes, Matthew Muckley, Ammar Rizvi, Claire
+Roberts, Koustuv Sinha, Artem Zholus, et al. V-jepa
+2: Self-supervised video models enable understanding,
+predictionandplanning.arXivpreprintarXiv:2506.09985,
+2025.
+Jinze Bai, Shuai Bai, Yunfei Chu, Zeyu Cui, Kai Dang,
+Xiaodong Deng, Yang Fan, Wenbin Ge, Yu Han, Fei
+Huang, et al. Qwen technical report.arXiv preprint
+arXiv:2309.16609, 2023.
+Federico Baldassarre, Marc Szafraniec, Basile Terver, Vasil
+Khalidov,FranciscoMassa,YannLeCun,PatrickLabatut,
+Maximilian Seitzer, and Piotr Bojanowski. Back to the
+features: Dino as a foundation for video world models.
+arXiv preprint arXiv:2507.19468, 2025.
+RandallBalestrieroandYannLeCun. Lejepa: Provableand
+scalable self-supervised learning without the heuristics.
+arXiv preprint arXiv:2511.08544, 2025.
+Adrien Bardes, Jean Ponce, and Yann LeCun. Vicreg:
+Variance-invariance-covariance regularization for self-
+supervised learning.arXiv preprint arXiv:2105.04906,
+2021.
+Adrien Bardes, Quentin Garrido, Jean Ponce, Xinlei Chen,
+Michael Rabbat, Yann LeCun, Mido Assran, and Nico-
+las Ballas. V-jepa: Latent video prediction for visual
+representation learning. 2023.
+Loïc Barrault, Paul-Ambroise Duquenne, Maha Elbayad,
+Artyom Kozhevnikov, Belen Alastruey, Pierre Andrews,
+Mariano Coria, Guillaume Couairon, Marta R Costa-
+jussà,DavidDale,etal.Largeconceptmodels: Language
+modeling in a sentence representation space.arXiv
+preprint arXiv:2412.08821, 2024.
+LucasBeyer,AndreasSteiner,AndréSusanoPinto,Alexan-
+der Kolesnikov, Xiao Wang, Daniel Salz, Maxim Neu-
+mann, Ibrahim Alabdulmohsin, Michael Tschannen,
+Emanuele Bugliarello, et al. Paligemma: A versatile 3b
+vlm for transfer.arXiv preprint arXiv:2407.07726, 2024.
+Kevin Black, Manuel Y Galliker, and Sergey Levine. Real-
+time execution of action chunking flow policies.arXiv
+preprint arXiv:2506.07339, 2025.
+Daniel Bolya, Po-Yao Huang, Peize Sun, Jang Hyun Cho,
+Andrea Madotto, Chen Wei, Tengyu Ma, Jiale Zhi,
+Jathushan Rajasegaran, Hanoona Rasheed, et al. Percep-
+tion encoder: The best visual embeddings are not at the
+output of the network.arXiv preprint arXiv:2504.13181,
+2025.
+Florian Bordes, Richard Yuanzhe Pang, Anurag Ajay,
+Alexander C Li, Adrien Bardes, Suzanne Petryk, Oscar
+Mañas, Zhiqiu Lin, Anas Mahmoud, Bargav Jayaraman,
+et al. An introduction to vision-language modeling.
+arXiv preprint arXiv:2405.17247, 2024.
+Fabian Caba Heilbron, Victor Escorcia, Bernard Ghanem,
+and Juan Carlos Niebles. Activitynet: A large-scale
+video benchmark for human activity understanding. In
+Proceedings of the ieee conference on computer vision and
+pattern recognition, pages 961–970, 2015.
+Qingqing Cao, Bhargavi Paranjape, and Hannaneh Ha-
+jishirzi. Pumer: Pruningandmergingtokensforefficient
+vision language models.arXiv preprint arXiv:2305.17530,
+2023.
+Wenhao Chai, Enxin Song, Yilun Du, Chenlin Meng,
+Vashisht Madhavan, Omer Bar-Tal, Jenq-Neng Hwang,
+Saining Xie, and Christopher D Manning. Auroracap:
+Efficient, performant video detailed captioning and a
+new benchmark.arXiv preprint arXiv:2410.03051, 2024.
+Dibyadip Chatterjee, Edoardo Remelli, Yale Song, Bugra
+Tekin, Abhay Mittal, Bharat Bhatnagar, Necati Cihan
+CamgÃk,z, Shreyas Hampali, Eric Sauser, Shugao Ma,
+et al. Memory-efficient streaming videollms for real-
+time procedural video understanding.arXiv preprint
+arXiv:2504.13915, 2025.
+David Chen and William B Dolan. Collecting highly
+parallel data for paraphrase evaluation. InProceedings of
+the 49th annual meeting of the association for computational
+linguistics: human language technologies, pages 190–200,
+2011.
+11VL-JEPA: Joint Embedding Predictive Architecture for Vision-language
+Sec 1: Intro | Sec 2: Method | Sec 3: Implementation | Sec 4: Experiments | Sec 5: Related Works | Sec 6: Conclusion
+Delong Chen, Zhao Wu, Fan Liu, Zaiquan Yang, Shaoqiu
+Zheng, Ying Tan, and Erjin Zhou. Protoclip: Proto-
+typical contrastive language image pretraining.IEEE
+Transactions on Neural Networks and Learning Systems,
+2023.
+DelongChen,SamuelCahyawĳaya,JianfengLiu,Baoyuan
+Wang, and Pascale Fung. Subobject-level image tok-
+enization.arXiv preprint arXiv:2402.14327, 2024a.
+Delong Chen, Jianfeng Liu, Wenliang Dai, and Baoyuan
+Wang. Visual instruction tuning with polite flamingo.
+InProceedings of the aaai conference on artificial intelligence,
+volume 38, pages 17745–17753, 2024b.
+Delong Chen, Willy Chung, Yejin Bang, Ziwei Ji, and Pas-
+caleFung. Worldprediction: Abenchmarkforhigh-level
+world modeling and long-horizon procedural planning.
+arXiv preprint arXiv:2506.04363, 2025a.
+Delong Chen, Theo Moutakanni, Willy Chung, Yejin Bang,
+Ziwei Ji, Allen Bolourchi, and Pascale Fung. Planning
+with reasoning using vision language world model.
+arXiv preprint arXiv:2509.02722, 2025b.
+Delong Chen, Tejaswi Kasarla, Yejin Bang, Mustafa
+Shukor, Willy Chung, Jade Yu, Allen Bolourchi,
+Theo Moutakanni, and Pascale Fung. Action100m:
+A large-scale video action dataset.arXiv preprint
+arXiv:2601.10592, 2026.
+Joya Chen, Zhaoyang Lv, Shiwei Wu, Kevin Qinghong
+Lin, Chenan Song, Difei Gao, Jia-Wei Liu, Ziteng Gao,
+DongxingMao,andMikeZhengShou. Videollm-online:
+Online video large language model for streaming video.
+InProceedings of the IEEE/CVF Conference on Computer
+Vision and Pattern Recognition, pages 18407–18418, 2024c.
+Xi Chen, Xiao Wang, Soravit Changpinyo, Anthony J
+Piergiovanni, Piotr Padlewski, Daniel Salz, Sebastian
+Goodman, Adam Grycner, Basil Mustafa, Lucas Beyer,
+et al. Pali: A jointly-scaled multilingual language-image
+model.arXiv preprint arXiv:2209.06794, 2022.
+ZheChen,JiannanWu,WenhaiWang,WeĳieSu,GuoChen,
+Sen Xing, Muyan Zhong, Qinglong Zhang, Xizhou Zhu,
+Lewei Lu, et al. Internvl: Scaling up vision foundation
+models and aligning for generic visual-linguistic tasks.
+InProceedings of the IEEE/CVF conference on computer
+vision and pattern recognition, pages 24185–24198, 2024d.
+Jang Hyun Cho, Andrea Madotto, Effrosyni Mavroudi,
+Triantafyllos Afouras, Tushar Nagarajan, Muhammad
+Maaz, Yale Song, Tengyu Ma, Shuming Hu, Suyog
+Jain, et al. Perceptionlm: Open-access data and mod-
+els for detailed visual understanding.arXiv preprint
+arXiv:2504.13180, 2025.
+Wenliang Dai, Junnan Li, Dongxu Li, Anthony Tiong,
+Junqi Zhao, Weisheng Wang, Boyang Li, Pascale N
+Fung, and Steven Hoi. Instructblip: Towards general-
+purposevision-languagemodelswithinstructiontuning.
+Advancesinneuralinformationprocessingsystems,36:49250–
+49267, 2023.
+Dima Damen, Hazel Doughty, Giovanni Maria Farinella,
+Antonino Furnari, Evangelos Kazakos, Jian Ma, Davide
+Moltisanti, Jonathan Munro, Toby Perrett, Will Price,
+et al. Rescaling egocentric vision: Collection, pipeline
+andchallengesforepic-kitchens-100.InternationalJournal
+of Computer Vision, 130(1):33–55, 2022.
+Shangzhe Di, Zhelun Yu, Guanghao Zhang, Haoyuan
+Li, Tao Zhong, Hao Cheng, Bolin Li, Wanggui He,
+FangxunShu, andHaoJiang. Streamingvideoquestion-
+answering with in-context video kv-cache retrieval.
+arXiv preprint arXiv:2503.00540, 2025.
+Sri Harsha Dumpala, Aman Jaiswal, Chandramouli Sastry,
+Evangelos Milios, Sageev Oore, and Hassan Sajjad. Sug-
+arcrepe++ dataset: vision-language model sensitivity to
+semanticandlexicalalterations. InProceedingsofthe38th
+International Conference on Neural Information Processing
+Systems, NIPS ’24, Red Hook, NY, USA, 2024a. Curran
+Associates Inc. ISBN 9798331314385.
+Sri Harsha Dumpala, Aman Jaiswal, Chandramouli Sastry,
+EvangelosMilios,SageevOore,andHassanSajjad. Visla
+benchmark: Evaluatingembeddingsensitivitytoseman-
+ticandlexicalalterations.arXivpreprintarXiv:2404.16365,
+2024b.
+Paul-Ambroise Duquenne, Holger Schwenk, and Benoît
+Sagot. Sonar: sentence-level multimodal and language-
+agnosticrepresentations.arXivpreprintarXiv:2308.11466,
+2023.
+Zhengcong Fei, Mingyuan Fan, and Junshi Huang. A-jepa:
+Joint-embeddingpredictivearchitecturecanlisten.arXiv
+preprint arXiv:2311.15830, 2023.
+Enrico Fini, Mustafa Shukor, Xiujun Li, Philipp Dufter,
+Michal Klein, David Haldimann, Sai Aitharaju, Vic-
+tor G Turrisi da Costa, Louis Béthune, Zhe Gan, et al.
+Multimodal autoregressive pre-training of large vision
+encoders. InProceedingsoftheComputerVisionandPattern
+Recognition Conference, pages 9641–9654, 2025.
+Pascale Fung, Yoram Bachrach, Asli Celikyilmaz, Ka-
+malika Chaudhuri, Delong Chen, Willy Chung, Em-
+manuel Dupoux, Hongyu Gong, Hervé Jégou, Alessan-
+dro Lazaric, et al. Embodied ai agents: Modeling the
+world.arXiv preprint arXiv:2506.22355, 2025.
+12VL-JEPA: Joint Embedding Predictive Architecture for Vision-language
+Sec 1: Intro | Sec 2: Method | Sec 3: Implementation | Sec 4: Experiments | Sec 5: Related Works | Sec 6: Conclusion
+SamirYitzhakGadre,GabrielIlharco,AlexFang,Jonathan
+Hayase, Georgios Smyrnis, Thao Nguyen, Ryan Marten,
+Mitchell Wortsman, Dhruba Ghosh, Jieyu Zhang, et al.
+Datacomp: In search of the next generation of multi-
+modaldatasets.AdvancesinNeuralInformationProcessing
+Systems, 36:27092–27112, 2023.
+RaghavGoyal,SamiraEbrahimiKahou,VincentMichalski,
+Joanna Materzynska, Susanne Westphal, Heuna Kim,
+Valentin Haenel, Ingo Fruend, Peter Yianilos, Moritz
+Mueller-Freitag,etal. The"somethingsomething"video
+database for learning and evaluating visual common
+sense. InProceedings of the IEEE international conference
+on computer vision, pages 5842–5850, 2017.
+Kristen Grauman, Andrew Westbury, Lorenzo Torresani,
+KrisKitani,JitendraMalik,TriantafyllosAfouras,Kumar
+Ashutosh, Vĳay Baiyya, Siddhant Bansal, Bikram Boote,
+et al. Ego-exo4d: Understanding skilled human activity
+from first-and third-person perspectives. InProceedings
+oftheIEEE/CVFConferenceonComputerVisionandPattern
+Recognition, pages 19383–19400, 2024.
+ShiboHao,SainbayarSukhbaatar,DiJiaSu,XianLi,Zhiting
+Hu, Jason Weston, and Yuandong Tian. Training large
+language models to reason in a continuous latent space.
+arXiv preprint arXiv:2412.06769, 2024.
+DrewAHudsonandChristopherDManning. Gqa: Anew
+dataset for real-world visual reasoning and composi-
+tionalquestionanswering. InProceedingsoftheIEEE/CVF
+conferenceoncomputervisionandpatternrecognition,pages
+6700–6709, 2019.
+ChaoJia,YinfeiYang,YeXia,Yi-TingChen,ZaranaParekh,
+Hieu Pham, Quoc Le, Yun-Hsuan Sung, Zhen Li, and
+Tom Duerig. Scaling up visual and vision-language
+representation learning with noisy text supervision. In
+International conference on machine learning, pages 4904–
+4916. PMLR, 2021.
+Cĳo Jose, Théo Moutakanni, Dahyun Kang, Federico Bal-
+dassarre, Timothée Darcet, Hu Xu, Daniel Li, Marc
+Szafraniec, Michaël Ramamonjisoa, Maxime Oquab,
+et al. Dinov2 meets text: A unified framework for
+image-and pixel-level vision-language alignment. In
+Proceedings of the Computer Vision and Pattern Recognition
+Conference, pages 24905–24916, 2025.
+Will Kay, Joao Carreira, Karen Simonyan, Brian Zhang,
+Chloe Hillier, Sudheendra Vĳayanarasimhan, Fabio Vi-
+ola, Tim Green, Trevor Back, Paul Natsev, et al. The
+kinetics human action video dataset.arXiv preprint
+arXiv:1705.06950, 2017.
+Jing Yu Koh, Ruslan Salakhutdinov, and Daniel Fried.
+Grounding language models to images for multimodal
+inputsandoutputs.InInternationalConferenceonMachine
+Learning, pages 17283–17300. PMLR, 2023.
+Yann LeCun. A path towards autonomous machine intelli-
+gence.Open Review, 62(1):1–62, 2022.
+Hongyang Lei, Xiaolong Cheng, Qi Qin, Dan Wang,
+Huazhen Huang, Qingqing Gu, Yetao Wu, and Luo
+Ji. M3-jepa: Multimodal alignment via multi-gate moe
+basedonthejoint-embeddingpredictivearchitecture. In
+Forty-second International Conference on Machine Learning,
+2025.
+Chengzu Li, Wenshan Wu, Huanyu Zhang, Yan Xia,
+Shaoguang Mao, Li Dong, Ivan Vulić, and Furu
+Wei. Imagine while reasoning in space: Multimodal
+visualization-of-thought.arXivpreprintarXiv:2501.07542,
+2025a.
+Junnan Li, Dongxu Li, Silvio Savarese, and Steven Hoi.
+Blip-2: Bootstrappinglanguage-imagepre-trainingwith
+frozen image encoders and large language models. In
+International conference on machine learning, pages 19730–
+19742. PMLR, 2023a.
+Yifan Li, Yifan Du, Kun Zhou, Jinpeng Wang, Wayne Xin
+Zhao, and Ji-Rong Wen. Evaluating object hallucina-
+tion in large vision-language models.arXiv preprint
+arXiv:2305.10355, 2023b.
+YifanLi,KunZhou,WayneXinZhao,LeiFang,andJi-Rong
+Wen. Analyzing and mitigating object hallucination: A
+trainingbiasperspective.arXivpreprintarXiv:2508.04567,
+2025b.
+Bin Lin, Yang Ye, Bin Zhu, Jiaxi Cui, Munan Ning, Peng
+Jin, and Li Yuan. Video-llava: Learning united visual
+representation by alignment before projection. InPro-
+ceedings of the 2024 Conference on Empirical Methods in
+Natural Language Processing, pages 5971–5984, 2024.
+Fan Liu, Delong Chen, Zhangqingyun Guan, Xiaocong
+Zhou, Jiale Zhu, Qiaolin Ye, Liyong Fu, and Jun Zhou.
+Remoteclip: A vision language foundation model for
+remote sensing.IEEE Transactions on Geoscience and
+Remote Sensing, 62:1–16, 2024.
+Haotian Liu, Chunyuan Li, Qingyang Wu, and Yong Jae
+Lee. Visual instruction tuning.Advances in neural infor-
+mation processing systems, 36:34892–34916, 2023.
+Andrés Marafioti, Orr Zohar, Miquel Farré, Merve Noyan,
+Elie Bakouch, Pedro Cuenca, Cyril Zakka, Loubna Ben
+Allal, Anton Lozhkov, Nouamane Tazi, et al. Smolvlm:
+Redefiningsmallandefficientmultimodalmodels.arXiv
+preprint arXiv:2504.05299, 2025.
+13VL-JEPA: Joint Embedding Predictive Architecture for Vision-language
+Sec 1: Intro | Sec 2: Method | Sec 3: Implementation | Sec 4: Experiments | Sec 5: Related Works | Sec 6: Conclusion
+Jack Merullo, Louis Castricato, Carsten Eickhoff, and Ellie
+Pavlick. Linearly mapping from image to text space.
+arXiv preprint arXiv:2209.15162, 2022.
+Fionn Murtagh and Pedro Contreras. Algorithms for hier-
+archical clustering: an overview.Wiley interdisciplinary
+reviews: data mining and knowledge discovery, 2(1):86–97,
+2012.
+Rui Qian, Xiaoyi Dong, Pan Zhang, Yuhang Zang, Shuan-
+grui Ding, Dahua Lin, and Jiaqi Wang. Streaming long
+video understanding with large language models.Ad-
+vancesinNeuralInformationProcessingSystems,37:119336–
+119360, 2024.
+Alec Radford, Jong Wook Kim, Chris Hallacy, Aditya
+Ramesh, Gabriel Goh, Sandhini Agarwal, Girish Sas-
+try, Amanda Askell, Pamela Mishkin, Jack Clark, et al.
+Learning transferable visual models from natural lan-
+guage supervision. InInternational conference on machine
+learning, pages 8748–8763. PmLR, 2021.
+Mustafa Shukor and Matthieu Cord. Skipping computa-
+tionsinmultimodalllms.arXivpreprintarXiv:2410.09454,
+2024.
+Mustafa Shukor, Corentin Dancette, and Matthieu Cord.
+ep-alm: Efficient perceptual augmentation of language
+models. InProceedings of the IEEE/CVF International
+Conference on Computer Vision, pages 22056–22069, 2023.
+Mustafa Shukor, Dana Aubakirova, Francesco Capuano,
+Pepĳn Kooĳmans, Steven Palma, Adil Zouitine, Michel
+Aractingi, Caroline Pascal, Martino Russi, Andres
+Marafioti, et al. Smolvla: A vision-language-action
+modelforaffordableandefficientrobotics.arXivpreprint
+arXiv:2506.01844, 2025.
+Wenxuan Song, Jiayi Chen, Pengxiang Ding, Han Zhao,
+Wei Zhao, Zhide Zhong, Zongyuan Ge, Jun Ma, and
+Haoang Li. Accelerating vision-language-action model
+integrated with action chunking via parallel decoding.
+arXiv preprint arXiv:2503.02310, 2025.
+Yansong Tang, Dajun Ding, Yongming Rao, Yu Zheng,
+DanyangZhang,LiliZhao,JiwenLu,andJieZhou. Coin:
+A large-scale dataset for comprehensive instructional
+video analysis. InProceedings of the IEEE/CVF Conference
+on Computer Vision and Pattern Recognition, pages 1207–
+1216, 2019.
+Basile Terver, Tsung-Yen Yang, Jean Ponce, Adrien Bardes,
+and Yann LeCun. What drives success in physical plan-
+ning with joint-embedding predictive world models?
+arXiv preprint arXiv:2512.24497, 2025.
+Bart Thomee, David A Shamma, Gerald Friedland, Ben-
+jamin Elizalde, Karl Ni, Douglas Poland, Damian Borth,
+and Li-Jia Li. Yfcc100m: The new data in multimedia
+research.Communications of the ACM, 59(2):64–73, 2016.
+MichaelTschannen,AlexeyGritsenko,XiaoWang,Muham-
+mad Ferjad Naeem, Ibrahim Alabdulmohsin, Nikhil
+Parthasarathy, Talfan Evans, Lucas Beyer, Ye Xia, Basil
+Mustafa,etal. Siglip2: Multilingualvision-languageen-
+coderswithimprovedsemanticunderstanding,localiza-
+tion, anddensefeatures.arXivpreprintarXiv:2502.14786,
+2025.
+Maria Tsimpoukelli, Jacob L Menick, Serkan Cabi, SM Es-
+lami,OriolVinyals,andFelixHill. Multimodalfew-shot
+learning with frozen language models.Advances in
+Neural Information Processing Systems, 34:200–212, 2021.
+Théophane Vallaeys, Mustafa Shukor, Matthieu Cord, and
+Jakob Verbeek. Improved baselines for data-efficient
+perceptual augmentation of llms. InEuropean Conference
+on Computer Vision, pages 369–387. Springer, 2024.
+PavanKumarAnasosaluVasu,FartashFaghri,Chun-Liang
+Li, Cem Koc, Nate True, Albert Antony, Gokula San-
+thanam, James Gabriel, Peter Grasch, Oncel Tuzel, et al.
+Fastvlm: Efficient vision encoding for vision language
+models. InProceedings of the Computer Vision and Pattern
+Recognition Conference, pages 19769–19780, 2025.
+Henrique Schechter Vera, Sahil Dua, Biao Zhang, Daniel
+Salz, Ryan Mullins, Sindhu Raghuram Panyam, Sara
+Smoot, Iftekhar Naim, Joe Zou, Feiyang Chen, et al.
+Embeddinggemma: Powerful and lightweight text rep-
+resentations.arXiv preprint arXiv:2509.20354, 2025.
+Jiawei Wang, Liping Yuan, Yuchen Zhang, and Hao-
+miao Sun. Tarsier: Recipes for training and evalu-
+ating large video description models.arXiv preprint
+arXiv:2407.00634, 2024.
+Tongzhou Wang and Phillip Isola. Understanding con-
+trastive representation learning through alignment and
+uniformityonthehypersphere.InInternationalconference
+on machine learning, pages 9929–9939. PMLR, 2020.
+Jason Wei, Xuezhi Wang, Dale Schuurmans, Maarten
+Bosma, Fei Xia, Ed Chi, Quoc V Le, Denny Zhou, et al.
+Chain-of-thought prompting elicits reasoning in large
+language models.Advances in neural information process-
+ing systems, 35:24824–24837, 2022.
+Shiwei Wu, Joya Chen, Kevin Qinghong Lin, Qimeng
+Wang, Yan Gao, Qianli Xu, Tong Xu, Yao Hu, Enhong
+Chen, and Mike Zheng Shou. Videollm-mod: Effi-
+cient video-language streaming with mixture-of-depths
+14VL-JEPA: Joint Embedding Predictive Architecture for Vision-language
+Sec 1: Intro | Sec 2: Method | Sec 3: Implementation | Sec 4: Experiments | Sec 5: Related Works | Sec 6: Conclusion
+vision computation.Advances in Neural Information Pro-
+cessing Systems, 37:109922–109947, 2024.
+Jun Xu, Tao Mei, Ting Yao, and Yong Rui. Msr-vtt: A
+large video description dataset for bridging video and
+language. InProceedingsoftheIEEEconferenceoncomputer
+vision and pattern recognition, pages 5288–5296, 2016.
+Yuan Yao, Tianyu Yu, Ao Zhang, Chongyi Wang, Junbo
+Cui, Hongji Zhu, Tianchi Cai, Haoyu Li, Weilin Zhao,
+Zhihui He, et al. Minicpm-v: A gpt-4v level mllm on
+your phone.arXiv preprint arXiv:2408.01800, 2024.
+Xiaohua Zhai, Basil Mustafa, Alexander Kolesnikov, and
+Lucas Beyer. Sigmoid loss for language image pre-
+training. InProceedings of the IEEE/CVF international
+conference on computer vision, pages 11975–11986, 2023.
+GaoyueZhou,HengkaiPan,YannLeCun,andLerrelPinto.
+Dino-wm: World models on pre-trained visual features
+enable zero-shot planning. InForty-second International
+Conference on Machine Learning, 2025.
+Luowei Zhou, Chenliang Xu, and Jason Corso. Towards
+automaticlearningofproceduresfromwebinstructional
+videos. InProceedings of the AAAI conference on artificial
+intelligence, volume 32, 2018.
+Xingyi Zhou, Anurag Arnab, Shyamal Buch, Shen Yan,
+Austin Myers, Xuehan Xiong, Arsha Nagrani, and
+Cordelia Schmid. Streaming dense video captioning.
+InProceedings of the IEEE/CVF Conference on Computer
+Vision and Pattern Recognition, pages 18243–18252, 2024.
+Dimitri Zhukov, Jean-Baptiste Alayrac, Ramazan Gok-
+berk Cinbis, David Fouhey, Ivan Laptev, and Josef Sivic.
+Cross-task weakly supervised learning from instruc-
+tional videos. InProceedings of the IEEE/CVF Conference
+on Computer Vision and Pattern Recognition, pages 3537–
+3545, 2019.
+15
