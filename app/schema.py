@@ -20,3 +20,7 @@ class ClientRequest(BaseModel):
 class ClientResponse(BaseModel):
     status: str
     content: str
+    
+class DocumentRequest(BaseModel):
+    conversation_id: str
+

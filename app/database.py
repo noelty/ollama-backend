@@ -100,19 +100,21 @@ def get_conv_messages(conn: sqlite3.Connection, conv_id: str):
         print(conv_messages)
     return conv_messages
 
-def insert_document(conn: sqlite3.Connection, doc_name: str):
+def insert_document(conn: sqlite3.Connection, doc_name: str, conv_id: str):
     doc_id = str(ULID())
     cursor = conn.cursor()
-    cursor.execute("INSERT INTO documents(id, name) VALUES( ?, ?)",(doc_id, doc_name))
+    cursor.execute("INSERT INTO documents(id, name, conv_id) VALUES( ?, ?, ?) RETURNING id",(doc_id, doc_name, conv_id))
+    res = cursor.fetchone()
     conn.commit()
-    return cursor.lastrowid
+    return res["id"]
 
 def insert_content(conn: sqlite3.Connection, content: str, doc_id: str):
     id = str(ULID())
     cursor = conn.cursor()
-    cursor.execute("INSERT INTO document_contents(id, content, doc_id) VALUES(?,?,?)", (id, content, doc_id))
+    cursor.execute("INSERT INTO document_contents(id, content, doc_id) VALUES(?,?,?) RETURNING id", (id, content, doc_id))
+    res = cursor.fetchone()
     conn.commit()
-    return cursor.lastrowid
+    return res["id"]
 
 def delete_document(conn: sqlite3.Connection, doc_id: str):
     cursor = conn.cursor()

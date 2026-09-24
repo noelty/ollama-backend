@@ -10,3 +10,6 @@ wheels/
 .venv
 
 chat.db
+typesense-data/
+uploads/
+rag/assets/

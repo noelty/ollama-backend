@@ -1,5 +1,5 @@
 from langchain_huggingface import HuggingFaceEmbeddings
-from splitting import split
+from rag.splitting import split
 import torch
 
 def embed(tokenized_content: list[str]):
@@ -10,9 +10,11 @@ def embed(tokenized_content: list[str]):
         model_kwargs={"device": device},
         encode_kwargs={"normalize_embeddings": True, "batch_size": 64},
     )
-
-    vectors = embeddings.embed_documents(tokenized_content)[0]
-
+    print(tokenized_content)
+    vectors = embeddings.embed_documents(tokenized_content)
+    print(len(tokenized_content))
+    print(len(vectors))
+    
     doc_result = []
     for i, chunk in enumerate(tokenized_content):
         doc_result.append({ "string": chunk,

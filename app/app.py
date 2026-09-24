@@ -4,6 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.database import init_db
 from app.routes import router
+from rag.typesense_client import ensure_collection
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -12,6 +13,7 @@ async def lifespan(app: FastAPI):
     print("db initialized")
     app.include_router(router)
     print("router done")
+    ensure_collection()
     yield
     
     # app shutdown code
