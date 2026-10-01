@@ -1,7 +1,7 @@
 from rag.extracting import extract
 from rag.splitting import split
-from rag.vectorizing import embed
-from app.database import get_db, insert_document, insert_content
+from rag.vectorizing import embed_doc
+from app.database import insert_document, insert_content
 from fastapi import UploadFile
 
 from rag.typesense_client import client, COLLECTION
@@ -11,7 +11,7 @@ from rag.typesense_client import client, COLLECTION
 def ingest_data(file: UploadFile, file_path: str, conv_id: str, db):
     extracted = extract(file_path)
     tokenized = split(extracted)
-    doc_results = embed(tokenized)
+    doc_results = embed_doc(tokenized)
     doc_id = str(insert_document(db, str(file.filename), conv_id))
     print(doc_id)
     for chunk in doc_results:

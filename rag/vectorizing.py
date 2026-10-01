@@ -2,7 +2,7 @@ from langchain_huggingface import HuggingFaceEmbeddings
 from rag.splitting import split
 import torch
 
-def embed(tokenized_content: list[str]):
+def embed_doc(tokenized_content: list[str]):
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
     embeddings = HuggingFaceEmbeddings(
@@ -22,3 +22,15 @@ def embed(tokenized_content: list[str]):
                            })
         
     return doc_result
+
+def vectorize_query(prompt: str):
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    
+    embeddings = HuggingFaceEmbeddings(
+        model_name="sentence-transformers/all-MiniLM-L6-v2",
+        model_kwargs={"device": device},
+        encode_kwargs={"normalize_embeddings": True, "batch_size": 64},
+    )
+    query_vector = embeddings.embed_query(prompt)
+    
+    return { "vector": query_vector }

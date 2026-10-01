@@ -1,0 +1,12 @@
+{
+  "model": "llama3.2",
+  "messages": [
+    { "role": "system", "content": "You are a factual assistant. Answer questions strictly using the context provided in the user's prompt. If the answer isn't there, admit you don't know." },
+    { "role": "user", "content": "What is our company's remote work policy?" },
+    { "role": "assistant", "content": "Our policy allows for up to 3 days of remote work per week." },
+    {
+      "role": "user",
+      "content": "Context for answering the next question:\n<context>\nCore working hours for remote workers are between 10:00 AM and 4:00 PM EST.\n</context>\n\nQuestion: What are the core hours I need to be online when working from home?"
+    }
+  ]
+}

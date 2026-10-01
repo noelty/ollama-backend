@@ -1,5 +1,6 @@
 from app.database import get_message_from_db, insert_message, empty_conv, save_conv, search_conv, insert_document
 from rag.pipeline import ingest_data
+from rag.querying import query
 
 from fastapi import UploadFile
 import sqlite3
@@ -63,10 +64,13 @@ def stream_llm(db: sqlite3.Connection, conv: ChatData, prompt: str, conv_id: str
     insert_message(db, "assistant", llm_response, utc_to_ist(datetime.now(timezone.utc)), conv_id)
 
 
-def stream_rag(db: sqlite3.Connection, conv: ChatData, prompt: str, conv_id: str):
-        
-    ingest_data(file, str(file_path), db)
-    
+def stream_rag(conv: ChatData, prompt: str, conv_id: str, db: sqlite3.Connection):
+    retrieved_chunks = []
+    retrieved_chunks = query(prompt, db)
+    print("++++++++++++++++++++++++++")
+    print(retrieved_chunks)
+    print("++++++++++++++++++++++++++")
+
     messages = []
     if empty_conv(db, conv_id) is not None:
         db_result = get_message_from_db(db, conv_id)
@@ -79,12 +83,12 @@ def stream_rag(db: sqlite3.Connection, conv: ChatData, prompt: str, conv_id: str
             })
         messages.append({
             "role": "user",
-            "content": prompt
+            "content": f"context:\n{" ".join(retrieved_chunks)}\n\nprompt:\n{prompt}"
         })
     else:
         messages.append({
             "role": "user",
-            "content": prompt
+            "content": f"context:\n{" ".join(retrieved_chunks)}\n\nprompt:\n{prompt}"
         })
         
     print(search_conv(db, conv_id))

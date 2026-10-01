@@ -48,18 +48,8 @@ def upload_doc(conversation_id: str, file: Annotated[UploadFile, File()], db: sq
 async def post_doc_chat(client_req: ClientRequest, db: sqlite3.Connection = Depends(get_db)):
     # client request will have the prompt + the conversation id, if no conversation id exists new conv_id is generated
     try:
-        
+        return StreamingResponse(stream_rag(client_req.chat, client_req.prompt, client_req.conversation_id, db), media_type="text/event-stream")
     except ValidationError as e:
         print(e)
-    # res = upload_document(file, db)
-    # file_res = res[0]
-    # file_path = res[1]
-    # return {
-    #     "filename": file.filename,
-    #     "content_type": file.content_type,
-    #     "saved_path": str(file_path)
-    # }
-    
-# @router.post("/api/rag-chats")
-# async def post_rag_chat():
+
     

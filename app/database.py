@@ -122,3 +122,9 @@ def delete_document(conn: sqlite3.Connection, doc_id: str):
     cursor.execute("DELETE FROM document WHERE id = ?", (doc_id,))
     conn.commit()
     return cursor.rowcount > 0
+
+def search_content(chunk_id: str, conn: sqlite3.Connection):
+    print(repr(conn))
+    cursor = conn.cursor()
+    cursor.execute("SELECT content from document_contents WHERE id = ?",(chunk_id,))
+    return cursor.fetchall() 
